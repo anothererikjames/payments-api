@@ -1,0 +1,116 @@
+openapi: 3.0.3
+info:
+  title: Billing API
+  description: Subscription, invoice, and payment management
+  version: "1.0.0"
+  contact:
+    name: Billing Team
+    email: billing@example.com
+security:
+  - BearerAuth: []
+
+servers:
+  - url: https://billing.api.example.com/v1
+    description: Production
+  - url: https://billing-dev.api.example.com/v1
+    description: Development
+
+paths:
+  /subscriptions:
+    get:
+      operationId: listSubscriptions
+      summary: List all subscriptions
+      tags: [Subscriptions]
+      responses:
+        "200":
+          description: List of subscriptions
+
+    post:
+      operationId: createSubscription
+      summary: Create a new subscription
+      tags: [Subscriptions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionInput"
+      responses:
+        "201":
+          description: Subscription created
+
+  /invoices:
+    get:
+      operationId: listInvoices
+      summary: List invoices
+      tags: [Invoices]
+      responses:
+        "200":
+          description: List of invoices
+
+  /invoices/{invoiceId}:
+    get:
+      operationId: getInvoice
+      summary: Get invoice by ID
+      tags: [Invoices]
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Invoice details
+        "404":
+          description: Invoice not found
+
+  /payment-methods:
+    get:
+      operationId: listPaymentMethods
+      summary: List saved payment methods
+      tags: [Payment Methods]
+      responses:
+        "200":
+          description: Payment methods list
+
+    post:
+      operationId: addPaymentMethod
+      summary: Add a payment method
+      tags: [Payment Methods]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentMethodInput"
+      responses:
+        "201":
+          description: Payment method added
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SubscriptionInput:
+      type: object
+      required: [planId, customerId]
+      properties:
+        planId:
+          type: string
+        customerId:
+          type: string
+
+    PaymentMethodInput:
+      type: object
+      required: [type, token]
+      properties:
+        type:
+          type: string
+          enum: [card, bank_account]
+        token:
+          type: string
