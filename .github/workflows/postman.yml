@@ -13,13 +13,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Postman CLI
-        run: curl -o- "https://dl-cli.pstmn.io/install/linux.sh" | sh
+        run: curl -o- "https://dl-cli.pstmn.io/install/linux.sh" | bash
 
       - name: Run collection
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
         run: |
-          postman collection run "52238111-b8c1f81c-2bb7-460d-b56d-4df857eb5bf1" \\
-            -e "52238111-310fba8f-85e9-4e9d-8e37-8cfa71f59680" \\
-            --report-events \\
+          postman collection run "52238111-b8c1f81c-2bb7-460d-b56d-4df857eb5bf1" \
+            -e "52238111-310fba8f-85e9-4e9d-8e37-8cfa71f59680" \
+            --report-events \
             --api-key "$POSTMAN_API_KEY"
