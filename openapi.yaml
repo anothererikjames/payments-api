@@ -1,92 +1,124 @@
 openapi: 3.0.3
 info:
-  title: Billing API
-  description: Subscription, invoice, and payment management
+  title: Identity API
+  description: User identity, authentication, and role management service
   version: "1.0.0"
   contact:
-    name: Billing Team
-    email: billing@example.com
+    name: Platform Team
+    email: platform@example.com
 security:
   - BearerAuth: []
 
 servers:
-  - url: https://billing.api.example.com/v1
+  - url: https://identity.api.example.com/v1
     description: Production
-  - url: https://billing-dev.api.example.com/v1
+  - url: https://identity-dev.api.example.com/v1
     description: Development
 
 paths:
-  /subscriptions:
-    get:
-      operationId: listSubscriptions
-      summary: List all subscriptions
-      tags: [Subscriptions]
-      responses:
-        "200":
-          description: List of subscriptions
-
+  /auth/login:
     post:
-      operationId: createSubscription
-      summary: Create a new subscription
-      tags: [Subscriptions]
+      operationId: loginUser
+      summary: Authenticate a user and return tokens
+      description: Validates credentials and returns access + refresh tokens
+      tags: [Authentication]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SubscriptionInput"
-      responses:
-        "201":
-          description: Subscription created
-
-  /invoices:
-    get:
-      operationId: listInvoices
-      summary: List invoices
-      tags: [Invoices]
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
       responses:
         "200":
-          description: List of invoices
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+        "401":
+          description: Invalid credentials
 
-  /invoices/{invoiceId}:
+  /auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Refresh an access token
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+
+  /users:
     get:
-      operationId: getInvoice
-      summary: Get invoice by ID
-      tags: [Invoices]
+      operationId: listUsers
+      summary: List all users
+      tags: [Users]
       parameters:
-        - name: invoiceId
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of users
+
+    post:
+      operationId: createUser
+      summary: Create a new user
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: User created
+
+  /users/{userId}:
+    get:
+      operationId: getUser
+      summary: Get a user by ID
+      tags: [Users]
+      parameters:
+        - name: userId
           in: path
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Invoice details
+          description: User found
         "404":
-          description: Invoice not found
-
-  /payment-methods:
-    get:
-      operationId: listPaymentMethods
-      summary: List saved payment methods
-      tags: [Payment Methods]
-      responses:
-        "200":
-          description: Payment methods list
-
-    post:
-      operationId: addPaymentMethod
-      summary: Add a payment method
-      tags: [Payment Methods]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PaymentMethodInput"
-      responses:
-        "201":
-          description: Payment method added
+          description: User not found
 
 components:
   securitySchemes:
@@ -96,21 +128,25 @@ components:
       bearerFormat: JWT
 
   schemas:
-    SubscriptionInput:
+    AuthTokens:
       type: object
-      required: [planId, customerId]
       properties:
-        planId:
+        accessToken:
           type: string
-        customerId:
+        refreshToken:
           type: string
+        expiresIn:
+          type: integer
 
-    PaymentMethodInput:
+    UserInput:
       type: object
-      required: [type, token]
+      required: [email, name]
       properties:
-        type:
+        email:
           type: string
-          enum: [card, bank_account]
-        token:
+          format: email
+        name:
           type: string
+        role:
+          type: string
+          enum: [admin, member, viewer]
