@@ -1,152 +1,573 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: Identity API
-  description: User identity, authentication, and role management service
-  version: "1.0.0"
+  title: Payments API
+  version: 2.1.0
+  summary: Internal payments service for the Postman Platform Demo
+  description: |
+    The Payments API powers the demo workspace for the Postman platform tour.
+
+    It exposes a small but realistic surface for creating and refunding
+    payments, listing transactions, and managing webhooks. The spec is
+    intentionally written to mirror real production patterns: idempotency
+    keys, cursor pagination, problem+json errors, RFC 9457 problem details,
+    and explicit deprecation signaling.
+
+    Use this spec as a single source of truth — generate the collection,
+    mocks, tests, docs, and SDKs from it.
   contact:
-    name: Platform Team
-    email: platform@example.com
-security:
-  - BearerAuth: []
+    name: Platform Demo Team
+    email: demo@example.com
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
 
 servers:
-  - url: https://identity.api.example.com/v1
+  - url: https://api.example.com
     description: Production
-  - url: https://identity-dev.api.example.com/v1
+  - url: https://staging.api.example.com
+    description: Staging
+  - url: https://dev.api.example.com
     description: Development
+  - url: '{postmanMockUrl}'
+    description: Postman mock server
+    variables:
+      postmanMockUrl:
+        default: https://example.mock.pstmn.io
+
+tags:
+  - name: Payments
+    description: Create, retrieve, and list payment transactions.
+  - name: Refunds
+    description: Refund completed payments (full or partial).
+  - name: Webhooks
+    description: Manage delivery endpoints for payment lifecycle events.
+  - name: Health
+    description: Service health and version metadata.
+
+security:
+  - bearerAuth: []
 
 paths:
-  /auth/login:
+  /v2/payments:
     post:
-      operationId: loginUser
-      summary: Authenticate a user and return tokens
-      description: Validates credentials and returns access + refresh tokens
-      tags: [Authentication]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:
-                  type: string
-                  format: email
-                password:
-                  type: string
-                  format: password
-      responses:
-        "200":
-          description: Authentication successful
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthTokens"
-        "401":
-          description: Invalid credentials
-
-  /auth/refresh:
-    post:
-      operationId: refreshToken
-      summary: Refresh an access token
-      tags: [Authentication]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [refreshToken]
-              properties:
-                refreshToken:
-                  type: string
-      responses:
-        "200":
-          description: New tokens issued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthTokens"
-
-  /users:
-    get:
-      operationId: listUsers
-      summary: List all users
-      tags: [Users]
+      tags: [Payments]
+      summary: Create a payment
+      operationId: createPayment
+      description: |
+        Creates a new payment. Requests are **idempotent** when an
+        `Idempotency-Key` header is supplied — a retry with the same key
+        within 24 hours returns the original response, even if the
+        original request body differs.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+            examples:
+              card:
+                summary: Card payment
+                value:
+                  amount: 4999
+                  currency: USD
+                  customer_id: cus_8d2f3c11
+                  source:
+                    type: card
+                    token: tok_visa_4242
+                  description: Demo subscription · monthly
+              ach:
+                summary: ACH transfer
+                value:
+                  amount: 25000
+                  currency: USD
+                  customer_id: cus_a91b22ee
+                  source:
+                    type: ach
+                    routing_number: '110000000'
+                    account_number: '000123456789'
+                  description: B2B invoice payment
+      responses:
+        '201':
+          description: Payment created
+          headers:
+            Idempotency-Replayed:
+              schema: { type: boolean }
+              description: True when this response was served from the idempotency cache.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+              examples:
+                created:
+                  $ref: '#/components/examples/PaymentCreated'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/IdempotencyConflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+    get:
+      tags: [Payments]
+      summary: List payments
+      operationId: listPayments
+      description: Returns a cursor-paginated list of payments, newest first.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: Opaque cursor from the previous page's `next_cursor`.
         - name: limit
           in: query
-          schema:
-            type: integer
-            default: 20
-        - name: offset
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: status
           in: query
           schema:
-            type: integer
-            default: 0
+            $ref: '#/components/schemas/PaymentStatus'
+        - name: customer_id
+          in: query
+          schema: { type: string }
       responses:
-        "200":
-          description: List of users
+        '200':
+          description: Paginated payment list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentList'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
+  /v2/payments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    get:
+      tags: [Payments]
+      summary: Retrieve a payment
+      operationId: getPayment
+      responses:
+        '200':
+          description: Payment found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v2/refunds:
     post:
-      operationId: createUser
-      summary: Create a new user
-      tags: [Users]
+      tags: [Refunds]
+      summary: Issue a refund
+      operationId: createRefund
+      description: |
+        Refunds a previously captured payment. Partial refunds are allowed
+        — omit `amount` to refund the full remaining balance.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UserInput"
+              $ref: '#/components/schemas/RefundCreate'
+            examples:
+              full:
+                summary: Full refund
+                value:
+                  payment_id: pay_8d2f3c11ab40
+                  reason: requested_by_customer
+              partial:
+                summary: Partial refund
+                value:
+                  payment_id: pay_8d2f3c11ab40
+                  amount: 1000
+                  reason: product_unsatisfactory
       responses:
-        "201":
-          description: User created
+        '201':
+          description: Refund created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Refund'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/IdempotencyConflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
-  /users/{userId}:
+  /v2/webhooks:
     get:
-      operationId: getUser
-      summary: Get a user by ID
-      tags: [Users]
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema:
-            type: string
+      tags: [Webhooks]
+      summary: List webhook endpoints
+      operationId: listWebhooks
       responses:
-        "200":
-          description: User found
-        "404":
-          description: User not found
+        '200':
+          description: List of registered endpoints
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Webhook' }
+
+    post:
+      tags: [Webhooks]
+      summary: Register a webhook endpoint
+      operationId: createWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+      responses:
+        '201':
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+
+  /v2/webhooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, pattern: '^whk_[a-z0-9]{12}$' }
+    delete:
+      tags: [Webhooks]
+      summary: Delete a webhook endpoint
+      operationId: deleteWebhook
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/charges:
+    post:
+      tags: [Payments]
+      summary: '[DEPRECATED] Create a charge'
+      operationId: createCharge
+      deprecated: true
+      description: |
+        **Deprecated** — use `POST /v2/payments` instead. This endpoint
+        is scheduled for removal in v3.0. New integrations should not
+        use it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, currency]
+              properties:
+                amount: { type: integer }
+                currency: { type: string }
+      responses:
+        '201':
+          description: Charge created (legacy shape)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  charge_id: { type: string }
+                  amount: { type: integer }
+
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  version: { type: string, example: 2.1.0 }
+                  uptime_seconds: { type: integer, example: 184231 }
 
 components:
   securitySchemes:
-    BearerAuth:
+    bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Bearer token issued by the auth service. Use `{{api_token}}` in Postman.
+
+  parameters:
+    PaymentId:
+      name: id
+      in: path
+      required: true
+      description: Payment identifier.
+      schema:
+        type: string
+        pattern: '^pay_[a-z0-9]{12}$'
+        example: pay_8d2f3c11ab40
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Unique key (UUID v4 recommended) to make this request idempotent.
+        Retries with the same key return the original response.
+      schema:
+        type: string
+        format: uuid
+
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Client-supplied trace ID, echoed in the response and in logs.
+      schema:
+        type: string
 
   schemas:
-    AuthTokens:
-      type: object
-      properties:
-        accessToken:
-          type: string
-        refreshToken:
-          type: string
-        expiresIn:
-          type: integer
+    PaymentStatus:
+      type: string
+      enum: [pending, succeeded, failed, refunded, partially_refunded]
 
-    UserInput:
+    PaymentSource:
+      oneOf:
+        - type: object
+          required: [type, token]
+          properties:
+            type: { type: string, enum: [card] }
+            token: { type: string, example: tok_visa_4242 }
+        - type: object
+          required: [type, routing_number, account_number]
+          properties:
+            type: { type: string, enum: [ach] }
+            routing_number: { type: string, pattern: '^[0-9]{9}$' }
+            account_number: { type: string, pattern: '^[0-9]{4,17}$' }
+
+    PaymentCreate:
       type: object
-      required: [email, name]
+      required: [amount, currency, customer_id, source]
       properties:
-        email:
+        amount:
+          type: integer
+          minimum: 1
+          description: Amount in the smallest currency unit (e.g. cents).
+          example: 4999
+        currency:
           type: string
-          format: email
-        name:
+          minLength: 3
+          maxLength: 3
+          example: USD
+        customer_id:
           type: string
-        role:
+          pattern: '^cus_[a-z0-9]{8,}$'
+        source:
+          $ref: '#/components/schemas/PaymentSource'
+        description:
           type: string
-          enum: [admin, member, viewer]
+          maxLength: 500
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    Payment:
+      type: object
+      required: [id, amount, currency, status, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^pay_[a-z0-9]{12}$'
+          example: pay_8d2f3c11ab40
+        amount: { type: integer, example: 4999 }
+        amount_refunded: { type: integer, example: 0 }
+        currency: { type: string, example: USD }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        customer_id: { type: string, example: cus_8d2f3c11 }
+        description: { type: string, example: "Demo subscription · monthly" }
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-04-30T14:22:18Z'
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    PaymentList:
+      type: object
+      required: [data, has_more]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Payment' }
+        has_more: { type: boolean }
+        next_cursor:
+          type: string
+          nullable: true
+          example: cur_eyJpZCI6InBheV84ZDJmIn0
+
+    RefundCreate:
+      type: object
+      required: [payment_id]
+      properties:
+        payment_id:
+          type: string
+          pattern: '^pay_[a-z0-9]{12}$'
+        amount:
+          type: integer
+          minimum: 1
+          description: Amount to refund. Defaults to full remaining balance.
+        reason:
+          type: string
+          enum: [requested_by_customer, duplicate, fraudulent, product_unsatisfactory]
+
+    Refund:
+      type: object
+      required: [id, payment_id, amount, status, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^rfd_[a-z0-9]{12}$'
+          example: rfd_2c5b1f7a99e0
+        payment_id:
+          type: string
+          example: pay_8d2f3c11ab40
+        amount: { type: integer, example: 1000 }
+        currency: { type: string, example: USD }
+        status:
+          type: string
+          enum: [pending, succeeded, failed]
+        reason: { type: string, example: requested_by_customer }
+        created_at: { type: string, format: date-time }
+
+    Webhook:
+      type: object
+      required: [id, url, events, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^whk_[a-z0-9]{12}$'
+          example: whk_4f1ae0c92d33
+        url:
+          type: string
+          format: uri
+          example: https://merchant.example.com/hooks/payments
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - payment.created
+              - payment.succeeded
+              - payment.failed
+              - refund.created
+              - refund.succeeded
+        secret:
+          type: string
+          description: HMAC signing secret. Returned only on creation.
+        created_at: { type: string, format: date-time }
+
+    WebhookCreate:
+      type: object
+      required: [url, events]
+      properties:
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          minItems: 1
+          items:
+            type: string
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details object.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://api.example.com/errors/validation
+        title:
+          type: string
+          example: Validation failed
+        status: { type: integer, example: 422 }
+        detail: { type: string }
+        instance: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              code: { type: string }
+              message: { type: string }
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    IdempotencyConflict:
+      description: Idempotency-Key reused with a different request body
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://api.example.com/errors/idempotency-conflict
+            title: Idempotency key reused
+            status: 409
+            detail: The Idempotency-Key has been seen with a different request body.
+
+    ValidationError:
+      description: Request body failed validation
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before retrying.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  examples:
+    PaymentCreated:
+      summary: 201 Created response
+      value:
+        id: pay_8d2f3c11ab40
+        amount: 4999
+        amount_refunded: 0
+        currency: USD
+        status: succeeded
+        customer_id: cus_8d2f3c11
+        description: "Demo subscription · monthly"
+        created_at: '2026-04-30T14:22:18Z'
+        metadata:
+          plan: pro
+          source: demo
